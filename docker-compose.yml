@@ -1,0 +1,86 @@
+x-paths: &paths
+  CACHE_DIR: /data/cache
+  UPLOAD_DIR: /data/uploads
+  TESSERACT_CMD: ""
+  TESSDATA_DIR: ""
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    environment:
+      OLLAMA_CONTEXT_LENGTH: "16384"
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      retries: 30
+
+  ollama-pull:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama", "pull", "${LLM_MODEL:-qwen3:8b}"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      <<: *paths
+      ASYNC_ENABLED: "true"
+      REDIS_URL: redis://redis:6379
+    volumes:
+      - data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
+        required: false
+
+  worker:
+    build: .
+    command: ["arq", "app.worker.WorkerSettings"]
+    env_file: .env
+    environment:
+      <<: *paths
+      REDIS_URL: redis://redis:6379
+    volumes:
+      - data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
+        required: false
+
+  mcp:
+    build: .
+    command: ["python", "-m", "app.mcp_server", "streamable-http"]
+    env_file: .env
+    environment:
+      <<: *paths
+      MCP_HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:8001:8001"   # без авторизации
+    volumes:
+      - data:/data
+    profiles: ["mcp"]
+
+volumes:
+  ollama_models:
+  data:
