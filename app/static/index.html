@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Анализ договоров</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1b1e23; --muted: #6b7280;
+    --border: #e3e6ea; --accent: #2457d6;
+    --low: #15803d; --medium: #b45309; --high: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1014; --card: #161a21; --text: #e5e7eb; --muted: #9aa3af;
+      --border: #272c36; --accent: #6b9bff;
+      --low: #4ade80; --medium: #fbbf24; --high: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 40px 16px 64px; }
+  h1 { font-size: 24px; margin: 0 0 20px; letter-spacing: -0.01em; }
+  #drop { border: 2px dashed var(--border); border-radius: 14px; background: var(--card);
+          padding: 44px 16px; text-align: center; cursor: pointer;
+          transition: border-color .15s, transform .15s; }
+  #drop:hover, #drop.over { border-color: var(--accent); }
+  #drop.over { transform: scale(1.01); }
+  #drop strong { color: var(--accent); }
+  #status { margin: 20px 2px; min-height: 22px; color: var(--muted); }
+  #status.err { color: var(--high); }
+  .spinner { display: inline-block; width: 14px; height: 14px; margin-right: 8px;
+             border: 2px solid var(--border); border-top-color: var(--accent);
+             border-radius: 50%; vertical-align: -2px; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+          padding: 18px 20px; margin-bottom: 14px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+             color: var(--muted); margin: 0 0 8px; }
+  .card p { margin: 0; }
+  ul { margin: 0; padding-left: 20px; }
+  .amount { font-size: 22px; font-weight: 600; }
+  .risks li { margin-bottom: 12px; }
+  .sev { font-weight: 700; }
+  .sev.high { color: var(--high); } .sev.medium { color: var(--medium); } .sev.low { color: var(--low); }
+  .warn { color: var(--high); }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; color: var(--muted); }
+  pre { overflow-x: auto; font-size: 12px; background: var(--bg); padding: 12px;
+        border-radius: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Анализ договоров</h1>
+
+  <div id="drop" role="button" tabindex="0">
+    Перетащите PDF сюда или <strong>выберите файл</strong>
+    <input id="file" type="file" accept="application/pdf" hidden>
+  </div>
+
+  <div id="status"></div>
+  <div id="out"></div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const drop = $("drop"), input = $("file"), statusEl = $("status"), out = $("out");
+
+drop.addEventListener("click", () => input.click());
+drop.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && input.click());
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => {
+  e.preventDefault(); drop.classList.remove("over");
+  const f = e.dataTransfer.files[0]; if (f) run(f);
+});
+input.addEventListener("change", () => input.files[0] && run(input.files[0]));
+
+function setStatus(text, { err = false, busy = false } = {}) {
+  statusEl.className = err ? "err" : "";
+  statusEl.replaceChildren();
+  if (busy) statusEl.append(el("span", "spinner"));
+  statusEl.append(text);
+}
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+async function run(file) {
+  out.replaceChildren();
+  setStatus(`Анализирую «${file.name}»…`, { busy: true });
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    const data = await getJSON("/analyze", { method: "POST", body: fd });
+    statusEl.replaceChildren();
+    render(data);
+  } catch (e) {
+    setStatus("Ошибка: " + e.message, { err: true });
+  } finally {
+    input.value = "";
+  }
+}
+
+function errText(body, r) {
+  const d = body.detail;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) return d.map((x) => x.msg).join("; ");
+  return `HTTP ${r.status}`;
+}
+
+async function getJSON(url, opts) {
+  const r = await fetch(url, opts);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(errText(body, r));
+  return body;
+}
+
+function section(title) {
+  const c = el("section", "card");
+  c.append(el("h2", null, title));
+  out.append(c);
+  return c;
+}
+
+function render(d) {
+  section("Резюме").append(el("p", null, d.summary || "нет"));
+
+  const parties = section("Стороны");
+  if (d.parties.length) {
+    const ul = el("ul");
+    d.parties.forEach((p) => {
+      const li = el("li", null, p.role ? `${p.name} (${p.role})` : p.name);
+      if (p.verified === false) li.append(" ", el("span", "warn", "(нет в тексте)"));
+      ul.append(li);
+    });
+    parties.append(ul);
+  } else parties.append(el("p", null, "Не найдены"));
+
+  section("Предмет").append(el("p", null, d.subject || "не указан"));
+
+  const amount = section("Сумма");
+  if (d.amount) {
+    const a = d.amount;
+    const text = a.value != null
+      ? `${a.value.toLocaleString("ru-RU")} ${a.currency || ""}`.trim()
+      : (a.raw || "нет");
+    amount.append(el("p", "amount", text));
+    if (!a.verified) amount.append(el("p", "warn", "не подтверждена текстом"));
+  } else amount.append(el("p", null, "Не указана"));
+
+  const risks = section(`Риски (${d.risks.length})`);
+  if (!d.risks.length) risks.append(el("p", null, "Не выявлены"));
+  const levels = { high: "высокий", medium: "средний", low: "низкий" };
+  const order = { high: 0, medium: 1, low: 2 };
+  const list = el("ul", "risks");
+  [...d.risks].sort((a, b) => order[a.severity] - order[b.severity]).forEach((r) => {
+    const li = el("li");
+    li.append(el("span", `sev ${r.severity}`, levels[r.severity]));
+    if (r.clause) li.append(`, п. ${r.clause}`);
+    if (!r.verified) li.append(" ", el("span", "warn", "(не подтверждён текстом)"));
+    li.append(el("div", null, r.description));
+    list.append(li);
+  });
+  risks.append(list);
+
+  const raw = el("details");
+  raw.append(el("summary", null, "Исходный JSON"), el("pre", null, JSON.stringify(d, null, 2)));
+  section("Ответ API").append(raw);
+}
+</script>
+</body>
+</html>
