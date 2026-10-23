@@ -1,0 +1,15 @@
+fastapi==0.161.1
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32
+pymupdf==2.0
+openai==3.37.0
+pydantic==2.14.1
+python-dotenv==1.2.4
+rapidfuzz==3.14.6
+pytesseract==0.3.13
+pillow==13.0.0
+arq==0.28.0
+mcp==2.3.0
+# natasha
+pytest==9.1.1
+httpx==0.28.1
